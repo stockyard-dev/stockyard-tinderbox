@@ -1,13 +1,24 @@
 package store
-import("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
-type DB struct{*sql.DB}
-type Pipeline struct{ID int64 `json:"id"`;Name string `json:"name"`;Script string `json:"script"`;WebhookSecret string `json:"webhook_secret"`;LastStatus string `json:"last_status"`;LastRun *string `json:"last_run"`;RunCount int `json:"run_count"`;CreatedAt time.Time `json:"created_at"`}
-type Run struct{ID int64 `json:"id"`;PipelineID int64 `json:"pipeline_id"`;Status string `json:"status"`;Output string `json:"output"`;StartedAt time.Time `json:"started_at"`;DurationMs int64 `json:"duration_ms"`}
-func Open(d string)(*DB,error){os.MkdirAll(d,0755);dsn:=filepath.Join(d,"tinderbox.db")+"?_journal_mode=WAL&_busy_timeout=5000";db,err:=sql.Open("sqlite",dsn);if err!=nil{return nil,fmt.Errorf("open: %w",err)};db.SetMaxOpenConns(1);migrate(db);return &DB{db},nil}
-func migrate(db *sql.DB){db.Exec(`CREATE TABLE IF NOT EXISTS pipelines(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,script TEXT DEFAULT '',webhook_secret TEXT DEFAULT '',last_status TEXT DEFAULT '',last_run TEXT,run_count INTEGER DEFAULT 0,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS runs(id INTEGER PRIMARY KEY AUTOINCREMENT,pipeline_id INTEGER NOT NULL,status TEXT NOT NULL,output TEXT DEFAULT '',started_at DATETIME DEFAULT CURRENT_TIMESTAMP,duration_ms INTEGER DEFAULT 0)`)}
-func(db *DB)Create(p *Pipeline)error{res,err:=db.Exec(`INSERT INTO pipelines(name,script,webhook_secret)VALUES(?,?,?)`,p.Name,p.Script,p.WebhookSecret);if err!=nil{return err};p.ID,_=res.LastInsertId();return nil}
-func(db *DB)List()([]Pipeline,error){rows,_:=db.Query(`SELECT id,name,script,webhook_secret,last_status,last_run,run_count,created_at FROM pipelines ORDER BY created_at DESC`);defer rows.Close();var out[]Pipeline;for rows.Next(){var p Pipeline;rows.Scan(&p.ID,&p.Name,&p.Script,&p.WebhookSecret,&p.LastStatus,&p.LastRun,&p.RunCount,&p.CreatedAt);out=append(out,p)};return out,nil}
-func(db *DB)RecordRun(r *Run){res,_:=db.Exec(`INSERT INTO runs(pipeline_id,status,output,duration_ms)VALUES(?,?,?,?)`,r.PipelineID,r.Status,r.Output,r.DurationMs);r.ID,_=res.LastInsertId();db.Exec(`UPDATE pipelines SET last_status=?,last_run=CURRENT_TIMESTAMP,run_count=run_count+1 WHERE id=?`,r.Status,r.PipelineID)}
-func(db *DB)ListRuns(pipelineID int64)([]Run,error){rows,_:=db.Query(`SELECT id,pipeline_id,status,output,started_at,duration_ms FROM runs WHERE pipeline_id=? ORDER BY started_at DESC LIMIT 50`,pipelineID);defer rows.Close();var out[]Run;for rows.Next(){var r Run;rows.Scan(&r.ID,&r.PipelineID,&r.Status,&r.Output,&r.StartedAt,&r.DurationMs);out=append(out,r)};return out,nil}
-func(db *DB)Delete(id int64){db.Exec(`DELETE FROM runs WHERE pipeline_id=?`,id);db.Exec(`DELETE FROM pipelines WHERE id=?`,id)}
-func(db *DB)Stats()(map[string]interface{},error){var p,r int;db.QueryRow(`SELECT COUNT(*) FROM pipelines`).Scan(&p);db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&r);return map[string]interface{}{"pipelines":p,"runs":r},nil}
+import ("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
+type DB struct{db *sql.DB}
+type Build struct{
+	ID string `json:"id"`
+	Name string `json:"name"`
+	Branch string `json:"branch"`
+	Commit string `json:"commit_hash"`
+	Status string `json:"status"`
+	Duration int `json:"duration"`
+	Logs string `json:"logs"`
+	CreatedAt string `json:"created_at"`
+}
+func Open(d string)(*DB,error){if err:=os.MkdirAll(d,0755);err!=nil{return nil,err};db,err:=sql.Open("sqlite",filepath.Join(d,"tinderbox.db")+"?_journal_mode=WAL&_busy_timeout=5000");if err!=nil{return nil,err}
+db.Exec(`CREATE TABLE IF NOT EXISTS builds(id TEXT PRIMARY KEY,name TEXT NOT NULL,branch TEXT DEFAULT 'main',commit_hash TEXT DEFAULT '',status TEXT DEFAULT 'pending',duration INTEGER DEFAULT 0,logs TEXT DEFAULT '',created_at TEXT DEFAULT(datetime('now')))`)
+return &DB{db:db},nil}
+func(d *DB)Close()error{return d.db.Close()}
+func genID()string{return fmt.Sprintf("%d",time.Now().UnixNano())}
+func now()string{return time.Now().UTC().Format(time.RFC3339)}
+func(d *DB)Create(e *Build)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO builds(id,name,branch,commit_hash,status,duration,logs,created_at)VALUES(?,?,?,?,?,?,?,?)`,e.ID,e.Name,e.Branch,e.Commit,e.Status,e.Duration,e.Logs,e.CreatedAt);return err}
+func(d *DB)Get(id string)*Build{var e Build;if d.db.QueryRow(`SELECT id,name,branch,commit_hash,status,duration,logs,created_at FROM builds WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.Branch,&e.Commit,&e.Status,&e.Duration,&e.Logs,&e.CreatedAt)!=nil{return nil};return &e}
+func(d *DB)List()[]Build{rows,_:=d.db.Query(`SELECT id,name,branch,commit_hash,status,duration,logs,created_at FROM builds ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Build;for rows.Next(){var e Build;rows.Scan(&e.ID,&e.Name,&e.Branch,&e.Commit,&e.Status,&e.Duration,&e.Logs,&e.CreatedAt);o=append(o,e)};return o}
+func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM builds WHERE id=?`,id);return err}
+func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM builds`).Scan(&n);return n}
