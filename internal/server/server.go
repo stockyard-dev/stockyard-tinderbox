@@ -35,6 +35,7 @@ patch.VariantA=existing.VariantA};if patch.VariantB==""{
 patch.VariantB=existing.VariantB};if patch.Status==""{
 patch.Status=existing.Status};if patch.WinnerVariant==""{
 patch.WinnerVariant=existing.WinnerVariant}
+    if patch.TrafficPct==0{patch.TrafficPct=existing.TrafficPct}
     s.db.Update(&patch);wj(w,200,s.db.Get(patch.ID))
 }
 func(s *Server)del(w http.ResponseWriter,r *http.Request){s.db.Delete(r.PathValue("id"));wj(w,200,map[string]string{"deleted":"ok"})}
